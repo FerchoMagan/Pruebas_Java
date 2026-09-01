@@ -1,0 +1,172 @@
+name: Build DocLibre Edit v2
+
+on:
+  push:
+    branches: [chatgpt-doclibre-build-20260901]
+    paths:
+      - .github/workflows/build-doclibre-edit-v2.yml
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Create Android project
+        shell: bash
+        run: |
+          mkdir -p edit/app/src/main/java/com/fer/doclibreedit edit/app/src/main/res/values
+          cat > edit/settings.gradle <<'EOF'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
+          rootProject.name='DocLibre Edit'
+          include ':app'
+          EOF
+          cat > edit/build.gradle <<'EOF'
+          plugins { id 'com.android.application' version '8.7.3' apply false }
+          EOF
+          cat > edit/app/build.gradle <<'EOF'
+          plugins { id 'com.android.application' }
+          android {
+            namespace 'com.fer.doclibreedit'
+            compileSdk 35
+            defaultConfig { applicationId 'com.fer.doclibreedit'; minSdk 26; targetSdk 35; versionCode 1; versionName '2.0.0' }
+            compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+          }
+          EOF
+          cat > edit/app/src/main/res/values/styles.xml <<'EOF'
+          <resources><style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar"><item name="android:fontFamily">sans</item><item name="android:colorAccent">#444444</item><item name="android:navigationBarColor">#FFFFFF</item><item name="android:statusBarColor">#FFFFFF</item><item name="android:windowLightStatusBar">true</item></style></resources>
+          EOF
+          cat > edit/app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+            <application android:theme="@style/AppTheme" android:label="DocLibre Edit" android:usesCleartextTraffic="false">
+              <activity android:name=".MainActivity" android:exported="true">
+                <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+                <intent-filter><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document"/></intent-filter>
+              </activity>
+            </application>
+          </manifest>
+          EOF
+          cat > edit/app/src/main/java/com/fer/doclibreedit/MainActivity.java <<'EOF'
+          package com.fer.doclibreedit;
+
+          import android.app.*;
+          import android.os.*;
+          import android.content.*;
+          import android.database.Cursor;
+          import android.net.Uri;
+          import android.provider.OpenableColumns;
+          import android.view.*;
+          import android.webkit.*;
+          import android.widget.*;
+          import java.io.*;
+          import java.nio.charset.StandardCharsets;
+          import java.util.*;
+          import java.util.zip.*;
+          import javax.xml.parsers.*;
+          import org.w3c.dom.*;
+          import org.xml.sax.InputSource;
+
+          public class MainActivity extends Activity {
+            static final int OPEN=10, SAVE=11;
+            WebView web; TextView title; String currentName="Documento.docx", pendingXml=null;
+            final String[] fonts={"Calibri","Arial","Times New Roman","Verdana","Georgia","Courier New"};
+            final int[] sizes={10,11,12,14,16,18,24,32};
+            final String[] colors={"#000000","#444444","#C62828","#D84315","#F9A825","#2E7D32","#00838F","#1565C0","#6A1B9A","#FFFFFF"};
+
+            @Override public void onCreate(Bundle b){super.onCreate(b);buildUi();loadEditor("<p>DocLibre Edit</p><p>Abrí un .docx para editarlo.</p>");Intent i=getIntent();if(Intent.ACTION_VIEW.equals(i.getAction())&&i.getData()!=null)open(i.getData());}
+            Button b(String s){Button x=new Button(this);x.setText(s);x.setAllCaps(false);x.setMinWidth(0);x.setPadding(10,4,10,4);return x;}
+            void rowAdd(LinearLayout r, View v){r.addView(v,new LinearLayout.LayoutParams(0,-2,1));}
+            void buildUi(){
+              LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);
+              title=new TextView(this);title.setText("DocLibre Edit");title.setTextSize(18);title.setPadding(16,12,16,8);root.addView(title);
+              HorizontalScrollView hs1=new HorizontalScrollView(this);LinearLayout r1=new LinearLayout(this);
+              Button open=b("Abrir");open.setOnClickListener(v->choose());r1.addView(open);
+              Button save=b("Guardar");save.setOnClickListener(v->requestSave());r1.addView(save);
+              Button undo=b("↶");undo.setOnClickListener(v->js("document.execCommand('undo')"));r1.addView(undo);
+              Button redo=b("↷");redo.setOnClickListener(v->js("document.execCommand('redo')"));r1.addView(redo);
+              Button bold=b("B");bold.setOnClickListener(v->js("document.execCommand('bold')"));r1.addView(bold);
+              Button ital=b("I");ital.setOnClickListener(v->js("document.execCommand('italic')"));r1.addView(ital);
+              Button under=b("U");under.setOnClickListener(v->js("document.execCommand('underline')"));r1.addView(under);
+              Button font=b("Fuente");font.setOnClickListener(v->pickFont());r1.addView(font);
+              Button size=b("Tamaño");size.setOnClickListener(v->pickSize());r1.addView(size);
+              Button fc=b("Color");fc.setOnClickListener(v->pickColor(false));r1.addView(fc);
+              Button fill=b("Relleno");fill.setOnClickListener(v->pickColor(true));r1.addView(fill);
+              hs1.addView(r1);root.addView(hs1);
+              HorizontalScrollView hs2=new HorizontalScrollView(this);LinearLayout r2=new LinearLayout(this);
+              Button l=b("Izq");l.setOnClickListener(v->js("document.execCommand('justifyLeft')"));r2.addView(l);
+              Button c=b("Centro");c.setOnClickListener(v->js("document.execCommand('justifyCenter')"));r2.addView(c);
+              Button rr=b("Der");rr.setOnClickListener(v->js("document.execCommand('justifyRight')"));r2.addView(rr);
+              Button j=b("Justificar");j.setOnClickListener(v->js("document.execCommand('justifyFull')"));r2.addView(j);
+              Button table=b("+ Tabla");table.setOnClickListener(v->insertTableDialog());r2.addView(table);
+              Button row=b("+ Fila");row.setOnClickListener(v->js("addRow()"));r2.addView(row);
+              Button col=b("+ Col");col.setOnClickListener(v->js("addCol()"));r2.addView(col);
+              hs2.addView(r2);root.addView(hs2);
+              web=new WebView(this);WebSettings s=web.getSettings();s.setJavaScriptEnabled(true);s.setDomStorageEnabled(false);s.setAllowFileAccess(false);s.setAllowContentAccess(false);s.setBuiltInZoomControls(true);s.setDisplayZoomControls(false);web.setWebChromeClient(new WebChromeClient());root.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
+            }
+            void js(String x){web.evaluateJavascript("(function(){"+x+";document.getElementById('editor').focus();})()",null);}
+            void choose(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.addCategory(Intent.CATEGORY_OPENABLE);i.setType("application/vnd.openxmlformats-officedocument.wordprocessingml.document");startActivityForResult(i,OPEN);}
+            void requestSave(){web.evaluateJavascript("makeWordXml()",v->{try{pendingXml=decodeJsString(v);Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);i.addCategory(Intent.CATEGORY_OPENABLE);i.setType("application/vnd.openxmlformats-officedocument.wordprocessingml.document");String base=currentName.toLowerCase(Locale.ROOT).endsWith(".docx")?currentName.substring(0,currentName.length()-5):currentName;i.putExtra(Intent.EXTRA_TITLE,base+"-editado.docx");startActivityForResult(i,SAVE);}catch(Exception e){toast("No se pudo preparar el guardado");}});}
+            static String decodeJsString(String s)throws Exception{if(s==null||"null".equals(s))return "";return new org.json.JSONArray("["+s+"]").getString(0);}
+            @Override protected void onActivityResult(int r,int c,Intent d){super.onActivityResult(r,c,d);if(c!=RESULT_OK||d==null||d.getData()==null)return;if(r==OPEN)open(d.getData());else if(r==SAVE)save(d.getData());}
+            void open(Uri u){currentName=name(u);title.setText(currentName);new Thread(()->{try(InputStream in=getContentResolver().openInputStream(u)){String h=docxToHtml(in);runOnUiThread(()->loadEditor(h));}catch(Exception e){runOnUiThread(()->toast("No se pudo abrir: "+e.getMessage()));}}).start();}
+            void save(Uri u){final String x=pendingXml;new Thread(()->{try(OutputStream out=getContentResolver().openOutputStream(u)){writeDocx(out,x);runOnUiThread(()->toast("DOCX guardado"));}catch(Exception e){runOnUiThread(()->toast("Error al guardar: "+e.getMessage()));}}).start();}
+            String name(Uri u){try(Cursor c=getContentResolver().query(u,new String[]{OpenableColumns.DISPLAY_NAME},null,null,null)){if(c!=null&&c.moveToFirst())return c.getString(0);}catch(Exception e){}return "Documento.docx";}
+            void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
+            void pickFont(){new AlertDialog.Builder(this).setTitle("Fuente").setItems(fonts,(d,w)->js("document.execCommand('fontName',false,"+q(fonts[w])+")")).show();}
+            void pickSize(){String[] ss=new String[sizes.length];for(int i=0;i<sizes.length;i++)ss[i]=sizes[i]+" pt";new AlertDialog.Builder(this).setTitle("Tamaño").setItems(ss,(d,w)->js("setFontPt("+sizes[w]+")")).show();}
+            void pickColor(boolean fill){new AlertDialog.Builder(this).setTitle(fill?"Relleno / resaltado":"Color de fuente").setItems(new String[]{"Negro","Gris","Rojo","Naranja","Amarillo","Verde","Turquesa","Azul","Violeta","Blanco"},(d,w)->{String cmd=fill?"applyFill("+q(colors[w])+")":"document.execCommand('foreColor',false,"+q(colors[w])+")";js(cmd);}).show();}
+            void insertTableDialog(){LinearLayout x=new LinearLayout(this);x.setPadding(24,0,24,0);x.setOrientation(LinearLayout.VERTICAL);EditText a=new EditText(this);a.setHint("Filas");a.setInputType(2);a.setText("2");EditText c=new EditText(this);c.setHint("Columnas");c.setInputType(2);c.setText("2");x.addView(a);x.addView(c);new AlertDialog.Builder(this).setTitle("Insertar tabla").setView(x).setPositiveButton("Insertar",(d,w)->{int r=2,co=2;try{r=Math.max(1,Math.min(20,Integer.parseInt(a.getText().toString())));co=Math.max(1,Math.min(10,Integer.parseInt(c.getText().toString())));}catch(Exception e){}js("insertTable("+r+","+co+")");}).setNegativeButton("Cancelar",null).show();}
+            static String q(String s){return "'"+s.replace("\\","\\\\").replace("'","\\'")+"'";}
+
+            void loadEditor(String body){String page="<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{margin:0;background:#eee;font-family:Arial,sans-serif}.paper{box-sizing:border-box;max-width:900px;min-height:95vh;margin:12px auto;background:white;padding:28px;box-shadow:0 1px 8px #aaa;line-height:1.35;color:#111}#editor:focus{outline:none}p{min-height:1em;margin:.45em 0}table{border-collapse:collapse;max-width:100%;margin:.5em 0}td{border:1px solid #888;min-width:55px;padding:5px;vertical-align:top}font{line-height:inherit}</style></head><body><div class='paper'><div id='editor' contenteditable='true'>"+body+"</div></div><script>"+editorJs()+"</script></body></html>";web.loadDataWithBaseURL(null,page,"text/html","UTF-8",null);}
+            static String editorJs(){return "function saveSel(){var s=getSelection();if(s.rangeCount)window._r=s.getRangeAt(0).cloneRange();}"+
+              "document.addEventListener('selectionchange',saveSel);"+
+              "function restore(){if(window._r){var s=getSelection();s.removeAllRanges();s.addRange(window._r);}}"+
+              "function setFontPt(pt){restore();document.execCommand('fontSize',false,'7');var fs=document.querySelectorAll('font[size=\\\"7\\\"]');for(var i=0;i<fs.length;i++){fs[i].removeAttribute('size');fs[i].style.fontSize=pt+'pt';}}"+
+              "function closestCell(){var n=getSelection().anchorNode;if(n&&n.nodeType==3)n=n.parentNode;while(n&&n.id!='editor'){if(n.tagName=='TD')return n;n=n.parentNode;}return null;}"+
+              "function applyFill(c){restore();var td=closestCell();var s=getSelection();if(td&&s.isCollapsed){td.style.backgroundColor=c;}else{document.execCommand('hiliteColor',false,c);}}"+
+              "function insertTable(r,c){restore();var h='<table><tbody>';for(var i=0;i<r;i++){h+='<tr>';for(var j=0;j<c;j++)h+='<td><p><br></p></td>';h+='</tr>';}h+='</tbody></table><p><br></p>';document.execCommand('insertHTML',false,h);}"+
+              "function addRow(){var td=closestCell();if(!td)return;var tr=td.parentNode,t=tr.parentNode;var n=tr.cloneNode(true);for(var i=0;i<n.cells.length;i++)n.cells[i].innerHTML='<p><br></p>';t.insertBefore(n,tr.nextSibling);}"+
+              "function addCol(){var td=closestCell();if(!td)return;var idx=td.cellIndex,t=td.closest('table');for(var i=0;i<t.rows.length;i++){var n=t.rows[i].insertCell(Math.min(idx+1,t.rows[i].cells.length));n.innerHTML='<p><br></p>';}}"+
+              "function xe(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\\\"/g,'&quot;');}"+
+              "function hex(c){if(!c||c=='transparent'||c.indexOf('rgba(0, 0, 0, 0)')>=0)return null;var m=c.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);if(!m)return null;function h(x){x=parseInt(x).toString(16);return x.length<2?'0'+x:x;}return h(m[1])+h(m[2])+h(m[3]);}"+
+              "function run(text,el){if(!text)return '';var cs=getComputedStyle(el),rp='';var fw=parseInt(cs.fontWeight)||0;if(fw>=600||cs.fontWeight=='bold')rp+='<w:b/>';if(cs.fontStyle=='italic')rp+='<w:i/>';if((cs.textDecorationLine||'').indexOf('underline')>=0)rp+='<w:u w:val=\\\"single\\\"/>';var co=hex(cs.color);if(co)rp+='<w:color w:val=\\\"'+co+'\\\"/>';var bg=hex(cs.backgroundColor);if(bg&&bg!='ffffff')rp+='<w:shd w:val=\\\"clear\\\" w:color=\\\"auto\\\" w:fill=\\\"'+bg+'\\\"/>';var ff=(cs.fontFamily||'Calibri').split(',')[0].replace(/[\\\"']/g,'').trim();rp+='<w:rFonts w:ascii=\\\"'+xe(ff)+'\\\" w:hAnsi=\\\"'+xe(ff)+'\\\"/>';var px=parseFloat(cs.fontSize)||14.666;var hp=Math.max(12,Math.round(px*1.5));rp+='<w:sz w:val=\\\"'+hp+'\\\"/><w:szCs w:val=\\\"'+hp+'\\\"/>';return '<w:r><w:rPr>'+rp+'</w:rPr><w:t xml:space=\\\"preserve\\\">'+xe(text)+'</w:t></w:r>'; }"+
+              "function inline(n,parent){if(n.nodeType==3)return run(n.nodeValue,parent);if(n.nodeType!=1)return '';if(n.tagName=='BR')return '<w:r><w:br/></w:r>';var o='';for(var i=0;i<n.childNodes.length;i++)o+=inline(n.childNodes[i],n);return o;}"+
+              "function para(el){var cs=getComputedStyle(el),a=cs.textAlign||'left',jc='left';if(a=='center')jc='center';else if(a=='right')jc='right';else if(a=='justify')jc='both';var x='<w:p><w:pPr><w:jc w:val=\\\"'+jc+'\\\"/></w:pPr>';for(var i=0;i<el.childNodes.length;i++)x+=inline(el.childNodes[i],el);return x+'</w:p>'; }"+
+              "function cell(td){var cs=getComputedStyle(td),bg=hex(cs.backgroundColor),pr='<w:tcPr>';if(bg&&bg!='ffffff')pr+='<w:shd w:val=\\\"clear\\\" w:color=\\\"auto\\\" w:fill=\\\"'+bg+'\\\"/>';pr+='</w:tcPr>';var x='<w:tc>'+pr,has=false;for(var i=0;i<td.children.length;i++){var e=td.children[i];if(e.tagName=='TABLE'){x+=table(e);has=true;}else if(e.tagName=='P'||e.tagName=='DIV'){x+=para(e);has=true;}}if(!has)x+=para(td);return x+'</w:tc>'; }"+
+              "function table(t){var x='<w:tbl><w:tblPr><w:tblBorders><w:top w:val=\\\"single\\\" w:sz=\\\"4\\\" w:color=\\\"888888\\\"/><w:left w:val=\\\"single\\\" w:sz=\\\"4\\\" w:color=\\\"888888\\\"/><w:bottom w:val=\\\"single\\\" w:sz=\\\"4\\\" w:color=\\\"888888\\\"/><w:right w:val=\\\"single\\\" w:sz=\\\"4\\\" w:color=\\\"888888\\\"/><w:insideH w:val=\\\"single\\\" w:sz=\\\"4\\\" w:color=\\\"888888\\\"/><w:insideV w:val=\\\"single\\\" w:sz=\\\"4\\\" w:color=\\\"888888\\\"/></w:tblBorders></w:tblPr>';for(var i=0;i<t.rows.length;i++){x+='<w:tr>';for(var j=0;j<t.rows[i].cells.length;j++)x+=cell(t.rows[i].cells[j]);x+='</w:tr>';}return x+'</w:tbl>'; }"+
+              "function makeWordXml(){var e=document.getElementById('editor'),body='';for(var i=0;i<e.childNodes.length;i++){var n=e.childNodes[i];if(n.nodeType==3){var p=document.createElement('p');p.textContent=n.nodeValue;body+=para(p);}else if(n.nodeType==1){if(n.tagName=='TABLE')body+=table(n);else body+=para(n);}}return '<?xml version=\\\"1.0\\\" encoding=\\\"UTF-8\\\" standalone=\\\"yes\\\"?><w:document xmlns:w=\\\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\\\"><w:body>'+body+'<w:sectPr><w:pgSz w:w=\\\"11906\\\" w:h=\\\"16838\\\"/><w:pgMar w:top=\\\"1440\\\" w:right=\\\"1440\\\" w:bottom=\\\"1440\\\" w:left=\\\"1440\\\"/></w:sectPr></w:body></w:document>'; }";}
+
+            static String docxToHtml(InputStream in)throws Exception{
+              Map<String,byte[]> z=new HashMap<>();long total=0;try(ZipInputStream zi=new ZipInputStream(in)){ZipEntry e;byte[] b=new byte[8192];while((e=zi.getNextEntry())!=null){if(e.isDirectory())continue;ByteArrayOutputStream o=new ByteArrayOutputStream();int n;while((n=zi.read(b))>0){total+=n;if(total>100L*1024L*1024L)throw new IOException("Documento demasiado grande");o.write(b,0,n);}z.put(e.getName(),o.toByteArray());}}
+              byte[] d=z.get("word/document.xml");if(d==null)throw new IOException("DOCX inválido");DocumentBuilderFactory f=DocumentBuilderFactory.newInstance();f.setNamespaceAware(true);f.setExpandEntityReferences(false);DocumentBuilder bu=f.newDocumentBuilder();bu.setEntityResolver((p,s)->new InputSource(new StringReader("")));Document doc=bu.parse(new ByteArrayInputStream(d));Element body=findFirst(doc.getDocumentElement(),"body");StringBuilder o=new StringBuilder();NodeList c=body.getChildNodes();for(int i=0;i<c.getLength();i++){Node n=c.item(i);if(n.getNodeType()!=1)continue;String q=ln(n);if("p".equals(q))o.append(parHtml((Element)n));else if("tbl".equals(q))o.append(tblHtml((Element)n));}return o.toString();
+            }
+            static String parHtml(Element p){String align="left";Element pp=child(p,"pPr");if(pp!=null){Element jc=child(pp,"jc");if(jc!=null){String v=attr(jc,"val");if("center".equals(v))align="center";else if("right".equals(v))align="right";else if("both".equals(v)||"distribute".equals(v))align="justify";}}StringBuilder o=new StringBuilder("<p style='text-align:").append(align).append("'>");NodeList c=p.getChildNodes();for(int i=0;i<c.getLength();i++){Node n=c.item(i);if(n.getNodeType()!=1)continue;String q=ln(n);if("r".equals(q))o.append(runHtml((Element)n));else if("hyperlink".equals(q)){NodeList h=n.getChildNodes();for(int k=0;k<h.getLength();k++)if(h.item(k).getNodeType()==1&&"r".equals(ln(h.item(k))))o.append(runHtml((Element)h.item(k)));}}return o.append("</p>").toString();}
+            static String runHtml(Element r){Element rp=child(r,"rPr");StringBuilder st=new StringBuilder();if(rp!=null){if(child(rp,"b")!=null)st.append("font-weight:bold;");if(child(rp,"i")!=null)st.append("font-style:italic;");if(child(rp,"u")!=null)st.append("text-decoration:underline;");Element co=child(rp,"color");if(co!=null){String v=attr(co,"val");if(v.matches("(?i)[0-9a-f]{6}"))st.append("color:#").append(v).append(';');}Element sh=child(rp,"shd");if(sh!=null){String v=attr(sh,"fill");if(v.matches("(?i)[0-9a-f]{6}"))st.append("background-color:#").append(v).append(';');}Element hi=child(rp,"highlight");if(hi!=null){String v=highlight(attr(hi,"val"));if(v!=null)st.append("background-color:").append(v).append(';');}Element fo=child(rp,"rFonts");if(fo!=null){String v=attr(fo,"ascii");if(v.isEmpty())v=attr(fo,"hAnsi");if(!v.isEmpty())st.append("font-family:").append(css(v)).append(';');}Element sz=child(rp,"sz");if(sz!=null){try{double pt=Double.parseDouble(attr(sz,"val"))/2.0;st.append("font-size:").append(pt).append("pt;");}catch(Exception e){}}}StringBuilder x=new StringBuilder("<span style=\"").append(st).append("\">");NodeList c=r.getChildNodes();for(int i=0;i<c.getLength();i++){Node n=c.item(i);if(n.getNodeType()!=1)continue;String q=ln(n);if("t".equals(q))x.append(esc(n.getTextContent()));else if("tab".equals(q))x.append("&emsp;");else if("br".equals(q))x.append("<br>");}return x.append("</span>").toString();}
+            static String tblHtml(Element t){StringBuilder o=new StringBuilder("<table><tbody>");NodeList c=t.getChildNodes();for(int i=0;i<c.getLength();i++){Node n=c.item(i);if(n.getNodeType()!=1||!"tr".equals(ln(n)))continue;o.append("<tr>");NodeList cc=n.getChildNodes();for(int j=0;j<cc.getLength();j++){Node td=cc.item(j);if(td.getNodeType()!=1||!"tc".equals(ln(td)))continue;String bg="";Element tcp=child((Element)td,"tcPr");if(tcp!=null){Element sh=child(tcp,"shd");if(sh!=null){String v=attr(sh,"fill");if(v.matches("(?i)[0-9a-f]{6}"))bg="background-color:#"+v+";";}}o.append("<td style=\"").append(bg).append("\">");NodeList z=td.getChildNodes();for(int k=0;k<z.getLength();k++){Node q=z.item(k);if(q.getNodeType()!=1)continue;if("p".equals(ln(q)))o.append(parHtml((Element)q));else if("tbl".equals(ln(q)))o.append(tblHtml((Element)q));}o.append("</td>");}o.append("</tr>");}return o.append("</tbody></table>").toString();}
+            static Element child(Element e,String l){NodeList n=e.getChildNodes();for(int i=0;i<n.getLength();i++)if(n.item(i).getNodeType()==1&&l.equals(ln(n.item(i))))return (Element)n.item(i);return null;}
+            static Element findFirst(Element e,String l){if(l.equals(ln(e)))return e;NodeList n=e.getChildNodes();for(int i=0;i<n.getLength();i++)if(n.item(i).getNodeType()==1){Element x=findFirst((Element)n.item(i),l);if(x!=null)return x;}return null;}
+            static String ln(Node n){String x=n.getLocalName();if(x!=null)return x;x=n.getNodeName();int i=x.indexOf(':');return i>=0?x.substring(i+1):x;}
+            static String attr(Element e,String l){NamedNodeMap a=e.getAttributes();for(int i=0;i<a.getLength();i++){Node n=a.item(i);String x=n.getLocalName();if(l.equals(x)||n.getNodeName().endsWith(":"+l)||l.equals(n.getNodeName()))return n.getNodeValue();}return "";}
+            static String css(String s){return "'"+s.replace("'","\\'")+"'";}
+            static String highlight(String s){switch(s){case "yellow":return "#ffff00";case "green":return "#00ff00";case "cyan":return "#00ffff";case "magenta":return "#ff00ff";case "blue":return "#0000ff";case "red":return "#ff0000";case "darkBlue":return "#00008b";case "darkCyan":return "#008b8b";case "darkGreen":return "#006400";case "darkMagenta":return "#8b008b";case "darkRed":return "#8b0000";case "darkYellow":return "#808000";case "darkGray":return "#555555";case "lightGray":return "#cccccc";case "black":return "#000000";case "white":return "#ffffff";default:return null;}}
+            static String esc(String s){if(s==null)return "";return s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;");}
+            static void put(ZipOutputStream z,String name,String content)throws Exception{z.putNextEntry(new ZipEntry(name));z.write(content.getBytes(StandardCharsets.UTF_8));z.closeEntry();}
+            static void writeDocx(OutputStream out,String documentXml)throws Exception{try(ZipOutputStream z=new ZipOutputStream(out)){put(z,"[Content_Types].xml","<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/><Override PartName=\"/word/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml\"/></Types>");put(z,"_rels/.rels","<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/></Relationships>");put(z,"word/_rels/document.xml.rels","<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/></Relationships>");put(z,"word/styles.xml","<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style></w:styles>");put(z,"word/document.xml",documentXml);}}
+          }
+          EOF
+      - name: Build APK
+        run: gradle -p edit assembleDebug --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DocLibre-Edit-v2-debug
+          path: edit/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
