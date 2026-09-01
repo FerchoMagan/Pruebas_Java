@@ -1,0 +1,111 @@
+name: Build DocLibre APK
+
+on:
+  push:
+    branches: [chatgpt-doclibre-build-20260901]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Create Android project
+        shell: bash
+        run: |
+          mkdir -p doclibre/app/src/main/java/com/fer/doclibre doclibre/app/src/main/res/values
+          cat > doclibre/settings.gradle <<'EOF'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
+          rootProject.name='DocLibre Reader'
+          include ':app'
+          EOF
+          cat > doclibre/build.gradle <<'EOF'
+          plugins { id 'com.android.application' version '8.7.3' apply false }
+          EOF
+          cat > doclibre/app/build.gradle <<'EOF'
+          plugins { id 'com.android.application' }
+          android {
+            namespace 'com.fer.doclibre'
+            compileSdk 35
+            defaultConfig { applicationId 'com.fer.doclibre'; minSdk 26; targetSdk 35; versionCode 1; versionName '1.0.0' }
+            compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+          }
+          EOF
+          cat > doclibre/app/src/main/res/values/styles.xml <<'EOF'
+          <resources><style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar"><item name="android:fontFamily">sans</item><item name="android:colorAccent">#444444</item></style></resources>
+          EOF
+          cat > doclibre/app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+            <application android:theme="@style/AppTheme" android:label="DocLibre Reader" android:usesCleartextTraffic="false">
+              <activity android:name=".MainActivity" android:exported="true">
+                <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+                <intent-filter><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document"/></intent-filter>
+              </activity>
+            </application>
+          </manifest>
+          EOF
+          cat > doclibre/app/src/main/java/com/fer/doclibre/MainActivity.java <<'EOF'
+          package com.fer.doclibre;
+
+          import android.app.*;
+          import android.os.*;
+          import android.content.*;
+          import android.database.Cursor;
+          import android.graphics.Color;
+          import android.net.Uri;
+          import android.provider.OpenableColumns;
+          import android.view.*;
+          import android.webkit.*;
+          import android.widget.*;
+          import java.io.*;
+          import java.util.*;
+          import java.util.zip.*;
+          import javax.xml.parsers.*;
+          import org.w3c.dom.*;
+
+          public class MainActivity extends Activity {
+            static final int OPEN=7;
+            WebView web; TextView title; EditText search; int zoom=100; boolean dark=false; String html="";
+            @Override public void onCreate(Bundle b){super.onCreate(b); ui(); welcome(); Intent i=getIntent(); if(Intent.ACTION_VIEW.equals(i.getAction())&&i.getData()!=null) open(i.getData());}
+            Button btn(String s){Button b=new Button(this);b.setText(s);b.setAllCaps(false);return b;}
+            void ui(){
+              LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);
+              title=new TextView(this);title.setText("DocLibre Reader");title.setTextSize(19);title.setPadding(20,18,20,10);root.addView(title);
+              LinearLayout bar=new LinearLayout(this);
+              Button open=btn("Abrir"); open.setOnClickListener(v->choose()); bar.addView(open);
+              Button m=btn("A-");m.setOnClickListener(v->{zoom=Math.max(60,zoom-10);web.getSettings().setTextZoom(zoom);});bar.addView(m);
+              Button p=btn("A+");p.setOnClickListener(v->{zoom=Math.min(200,zoom+10);web.getSettings().setTextZoom(zoom);});bar.addView(p);
+              Button d=btn("◐");d.setOnClickListener(v->{dark=!dark;load(html);});bar.addView(d);root.addView(bar);
+              LinearLayout sr=new LinearLayout(this);search=new EditText(this);search.setHint("Buscar");search.setSingleLine();sr.addView(search,new LinearLayout.LayoutParams(0,-2,1));Button f=btn("Buscar");f.setOnClickListener(v->web.findAllAsync(search.getText().toString()));sr.addView(f);root.addView(sr);
+              web=new WebView(this);WebSettings s=web.getSettings();s.setJavaScriptEnabled(false);s.setAllowFileAccess(false);s.setAllowContentAccess(false);s.setBuiltInZoomControls(true);s.setDisplayZoomControls(false);root.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
+            }
+            void welcome(){html="<html><body><h2>DocLibre Reader</h2><p>Lector local de documentos <b>.docx</b>.</p><p>Sin publicidad, sin cuenta, sin suscripción y sin permiso de Internet.</p><p>Tocá <b>Abrir</b> para elegir un documento.</p></body></html>";load(html);}
+            void choose(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.addCategory(Intent.CATEGORY_OPENABLE);i.setType("application/vnd.openxmlformats-officedocument.wordprocessingml.document");startActivityForResult(i,OPEN);}
+            @Override protected void onActivityResult(int r,int c,Intent d){super.onActivityResult(r,c,d);if(r==OPEN&&c==RESULT_OK&&d!=null&&d.getData()!=null)open(d.getData());}
+            void open(Uri u){title.setText(name(u));new Thread(()->{try(InputStream in=getContentResolver().openInputStream(u)){String x=docx(in);runOnUiThread(()->{html=x;load(x);});}catch(Exception e){runOnUiThread(()->load("<html><body><h3>No se pudo abrir</h3><p>"+esc(e.getMessage())+"</p></body></html>"));}}).start();}
+            String name(Uri u){try(Cursor c=getContentResolver().query(u,new String[]{OpenableColumns.DISPLAY_NAME},null,null,null)){if(c!=null&&c.moveToFirst())return c.getString(0);}catch(Exception e){}return "Documento.docx";}
+            void load(String x){String css=dark?"body{background:#141414;color:#eee}td{border-color:#666}":"body{background:#fff;color:#111}";String h="<html><head><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{font-family:sans-serif;padding:18px;line-height:1.5}table{border-collapse:collapse;width:100%}td{border:1px solid #aaa;padding:6px}img{max-width:100%;height:auto}"+css+"</style></head><body>"+x+"</body></html>";web.loadDataWithBaseURL(null,h,"text/html","UTF-8",null);web.getSettings().setTextZoom(zoom);}
+            static String docx(InputStream in)throws Exception{
+              Map<String,byte[]> z=new HashMap<>();try(ZipInputStream zi=new ZipInputStream(in)){ZipEntry e;byte[] b=new byte[8192];while((e=zi.getNextEntry())!=null){if(e.isDirectory())continue;ByteArrayOutputStream o=new ByteArrayOutputStream();int n;while((n=zi.read(b))>0)o.write(b,0,n);z.put(e.getName(),o.toByteArray());}}
+              byte[] d=z.get("word/document.xml");if(d==null)throw new Exception("No parece un archivo DOCX válido.");
+              DocumentBuilderFactory f=DocumentBuilderFactory.newInstance();f.setNamespaceAware(true);f.setFeature("http://apache.org/xml/features/disallow-doctype-decl",true);Document doc=f.newDocumentBuilder().parse(new ByteArrayInputStream(d));StringBuilder out=new StringBuilder();walk(doc.getDocumentElement(),out);return out.toString();
+            }
+            static void walk(Node n,StringBuilder o){String q=n.getLocalName()!=null?n.getLocalName():n.getNodeName();if(q.contains(":"))q=q.substring(q.indexOf(':')+1);boolean p=q.equals("p"),t=q.equals("tbl"),tr=q.equals("tr"),td=q.equals("tc"),b=q.equals("b"),i=q.equals("i");if(p)o.append("<p>");if(t)o.append("<table>");if(tr)o.append("<tr>");if(td)o.append("<td>");if(b)o.append("<b>");if(i)o.append("<i>");if(q.equals("t"))o.append(esc(n.getTextContent()));else if(q.equals("tab"))o.append("&emsp;");else if(q.equals("br"))o.append("<br>");else{NodeList c=n.getChildNodes();for(int x=0;x<c.getLength();x++)walk(c.item(x),o);}if(i)o.append("</i>");if(b)o.append("</b>");if(td)o.append("</td>");if(tr)o.append("</tr>");if(t)o.append("</table>");if(p)o.append("</p>");}
+            static String esc(String s){if(s==null)return "";return s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;");}
+          }
+          EOF
+      - name: Build APK
+        run: gradle -p doclibre assembleDebug --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DocLibre-Reader-v1-debug
+          path: doclibre/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
